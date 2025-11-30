@@ -1,0 +1,5 @@
+# Mapeamento de certificados locais
+tls:
+  certificates:
+    - certFile: /certs/fullchain.pem
+      keyFile: /certs/local-key.pem

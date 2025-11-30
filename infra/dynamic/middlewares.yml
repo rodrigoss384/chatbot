@@ -1,0 +1,14 @@
+http:
+  middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # IMPORTANTE: Para gerar o hash: echo $(htpasswd -nb user password)
+    dashboard-auth:
+      basicAuth:
+        users:
+          # Exemplo: admin/admin (Substitua pelo seu hash gerado)
+          - "admin:$apr1$bO.u.t.u$C.y.z.x.w.v.u.t.s.r.q.p"
+

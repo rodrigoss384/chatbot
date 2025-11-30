@@ -1,0 +1,289 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - "../infra/certs:/certs:ro"
+    environment:
+      - N8N_SECURE_COOKIE=false
+      - TZ=America/Sao_Paulo
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - WEBHOOK_TUNNEL_URL=${WEBHOOK_URL}
+      - N8N_HOST=n8n.seu-dominio.com
+      - NODE_EXTRA_CA_CERTS=/certs/rootCA.pem
+      - N8N_USER_MANAGEMENT_JWT_SECRET=${N8N_USER_MANAGEMENT_JWT_SECRET}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+    networks:
+      - traefik-net
+      - supabase_default
+      - n8n-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  chatwoot-postgres:
+    container_name: chatwoot-postgres
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB_CHATWOOT}
+      POSTGRES_USER: ${POSTGRES_USER_CHATWOOT}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_CHATWOOT}
+    volumes:
+      - chatwoot_postgres_data:/var/lib/postgresql/data
+    networks:
+      - traefik-net
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD_CHATWOOT} psql -h localhost -U ${POSTGRES_USER_CHATWOOT} -d ${POSTGRES_DB_CHATWOOT} -c 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  chatwoot-redis:
+    container_name: chatwoot-redis
+    image: redis:6-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - chatwoot_redis_data:/data
+    networks:
+      - traefik-net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  chatwoot:
+    container_name: chatwoot
+    restart: unless-stopped
+    image: chatwoot/chatwoot:latest
+    command: bundle exec rails s -p 3000 -b 0.0.0.0
+    ports:
+      - "3000:3000"
+    networks:
+      - traefik-net
+      - n8n-net
+    volumes:
+      - chatwoot_data:/app/storage
+    environment:
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      FRONTEND_URL: ${CHATWOOT_URL}
+      DEFAULT_LOCALE: pt_BR
+      FORCE_SSL: "false"
+      ENABLE_ACCOUNT_SIGNUP: "false"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@chatwoot-redis:6379
+      POSTGRES_HOST: chatwoot-postgres
+      POSTGRES_DATABASE: ${POSTGRES_DB_CHATWOOT}
+      POSTGRES_USERNAME: ${POSTGRES_USER_CHATWOOT}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_CHATWOOT}
+      ACTIVE_STORAGE_SERVICE: local
+      RAILS_LOG_TO_STDOUT: "true"
+      USE_INBOX_AVATAR_FOR_BOT: "true"
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_healthy
+
+  chatwoot-worker:
+    container_name: chatwoot-worker
+    image: chatwoot/chatwoot:latest
+    restart: unless-stopped
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_healthy
+    networks:
+      - traefik-net
+    volumes:
+      - chatwoot_data:/app/storage
+    environment:
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      FRONTEND_URL: ${CHATWOOT_URL}
+      DEFAULT_LOCALE: pt_BR
+      FORCE_SSL: "false"
+      ENABLE_ACCOUNT_SIGNUP: "false"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@chatwoot-redis:6379
+      POSTGRES_HOST: chatwoot-postgres
+      POSTGRES_DATABASE: ${POSTGRES_DB_CHATWOOT}
+      POSTGRES_USERNAME: ${POSTGRES_USER_CHATWOOT}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_CHATWOOT}
+      ACTIVE_STORAGE_SERVICE: local
+      RAILS_LOG_TO_STDOUT: "true"
+      USE_INBOX_AVATAR_FOR_BOT: "true"
+
+  cloudflare:
+    container_name: cloudflare
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    networks:
+      - n8n-net
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.6
+    container_name: evolution-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - evolution_data:/evolution/instances
+      - "../infra/certs:/certs:ro"
+    environment:
+      - SERVER_PORT=8080
+      - SERVER_URL=${SERVER_URL}
+      - SSL_CONF_PRIVKEY=/certs/local-key.pem
+      - SLL_CONF_FULLCHAIN=/certs/local-cert.pem
+      - AUTHENTICATION_API_KEY=${AUTHENTICATION_API_KEY}
+      - CHATWOOT_ENABLED=true
+      - CHATWOOT_MESSAGE_DELETE=false
+      - CHATWOOT_MESSAGE_READ=true
+      - CHATWOOT_IMPORT_PLACEHOLDER_MEDIA_MESSAGE=true
+      - PROVIDER_ENABLED=false
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=${CONNECTION_URI}
+      - DATABASE_CONNECTION_CLIENT_NAME=${POSTGRES_DB}
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_LABELS=true
+      - DATABASE_SAVE_DATA_HISTORIC=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP_DAYS=7
+      - DATABASE_DELETE_MESSAGE=true
+      - TZ=America/Sao_Paulo
+      - LANGUAGE=pt-BR
+      - DEL_INSTANCE=false
+      - DEL_TEMP_INSTANCES=false
+      - CORS_ORIGIN=*
+      - CORS_METHODS=GET,POST,PUT,DELETE
+      - CORS_CREDENTIALS=true
+      - WEBHOOK_GLOBAL_ENABLED=false
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
+      - WEBHOOK_EVENTS_MESSAGES_SET=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
+      - WEBHOOK_EVENTS_MESSAGES_EDITED=true
+      - WEBHOOK_EVENTS_MESSAGES_UPDATE=true
+      - WEBHOOK_EVENTS_MESSAGES_DELETE=true
+      - WEBHOOK_EVENTS_SEND_MESSAGE=true
+      - WEBHOOK_EVENTS_SEND_MESSAGE_UPDATE=true
+      - WEBHOOK_EVENTS_PRESENCE_UPDATE=true
+      - WEBHOOK_EVENTS_CHATS_SET=true
+      - WEBHOOK_EVENTS_CHATS_UPSERT=true
+      - WEBHOOK_EVENTS_CHATS_UPDATE=true
+      - WEBHOOK_EVENTS_CHATS_DELETE=true
+      - WEBHOOK_EVENTS_GROUPS_UPSERT=true
+      - WEBHOOK_EVENTS_GROUPS_UPDATE=true
+      - WEBHOOK_EVENTS_GROUP_PARTICIPANTS_UPDATE=true
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      - WEBHOOK_EVENTS_LABELS_EDIT=true
+      - WEBHOOK_EVENTS_LABELS_ASSOCIATION=true
+      - WEBHOOK_EVENTS_CALL=true
+      - WEBHOOK_REQUEST_TIMEOUT_MS=60000
+      - WEBHOOK_RETRY_MAX_ATTEMPTS=10
+      - WEBHOOK_RETRY_INITIAL_DELAY_SECONDS=5
+      - WEBHOOK_RETRY_USE_EXPONENTIAL_BACKOFF=true
+      - WEBHOOK_RETRY_MAX_DELAY_SECONDS=300
+      - WEBHOOK_RETRY_JITTER_FACTOR=0.2
+      - WEBHOOK_RETRY_NON_RETRYABLE_STATUS_CODES=400,401,403,404,422
+      - CONFIG_SESSION_PHONE_CLIENT=${INSTANCE_NAME}
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - QRCODE_LIMIT=30
+      - QRCODE_COLOR='#175197'
+      - CACHE_REDIS_ENABLED=false
+      - NODE_EXTRA_CA_CERTS=/certs/rootCA.pem
+    networks:
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-net"
+      - "traefik.http.services.evolution-svc.loadbalancer.server.port=8080"
+      - "traefik.http.routers.evolution-http.rule=Host(`evolution.seu-dominio.com`)"
+      - "traefik.http.routers.evolution-http.entrypoints=web"
+      - "traefik.http.routers.evolution-http.middlewares=https-redirect@file"
+      - "traefik.http.routers.evolution-https.rule=Host(`evolution.seu-dominio.com`)"
+      - "traefik.http.routers.evolution-https.entrypoints=websecure"
+      - "traefik.http.routers.evolution-https.service=evolution-svc"
+      - "traefik.http.routers.evolution-https.tls=true"
+    depends_on:
+      - postgres
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - traefik-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: America/Sao_Paulo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - traefik-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+volumes:
+  n8n_data:
+  evolution_data:
+  redis_data:
+  postgres_data:
+  chatwoot_data:
+  chatwoot_postgres_data:
+  chatwoot_redis_data:
+  waha_sessions:
+  waha_media:
+
+networks:
+  traefik-net:
+    external: true
+  supabase_default:
+    external: true
+  n8n-net:
+    external: true

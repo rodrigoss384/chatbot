@@ -1,0 +1,17 @@
+volumes/
+*/volumes/
+*_data
+
+.env
+.env.*
+!*.example
+
+infra/certs/*.pem
+infra/certs/*.key
+infra/certs/*.crt
+!infra/certs/.gitkeep
+
+.DS_Store
+.idea/
+.vscode/
+*.log
