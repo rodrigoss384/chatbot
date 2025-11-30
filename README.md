@@ -13,6 +13,7 @@ Este repositório contém a infraestrutura completa baseada em Docker para rodar
 * Docker & Docker Compose instalados.
 * Um domínio configurado (ex: `seu-dominio.com`) apontando para o IP do servidor.
 * Gerar certificados SSL locais ou configurar Let's Encrypt no Traefik.
+* A pasta infra/certs deve conter seus certificados.
 
 ## 🛠️ Instalação e Configuração
 
