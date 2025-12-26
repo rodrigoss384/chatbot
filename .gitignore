@@ -1,6 +1,3 @@
-volumes/
-*/volumes/
-*_data
 
 .env
 .env.*
